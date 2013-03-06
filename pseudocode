@@ -10,11 +10,34 @@ main(argv){
 }
 
 
-run(){
-	while(1){
-		receive_HTTP_request() && if timeout: break && handling_sig(SIGPIPE);
+run_milestone_1(){
+	receive_HTTP_request();
+	parse_HTTP_request_header();
+	change_HTTP_header();
+	forward_HTTP_request();
+	receive_HTTP_response();
+	parse_HTTP_response_header();
+	forward_HTTP_response();
+}
+
+run_milestone_2(){
+	keep_alive = true;
+	while(keep_alive){
+		receive_HTTP_request() & if timeout: break;
 		parse_HTTP_request_header();
-		if(milestone == 3 && is_cached(url) && method == "GET"){
+		forward_HTTP_request();
+		receive_HTTP_response();
+		parse_HTTP_response_header();
+		forward_HTTP_response();
+	}
+}
+
+run_milestone_3(){
+	keep_alive = true;
+	while(keep_alive){	
+		receive_HTTP_request() && if timeout: break;
+		parse_HTTP_request_header();
+		if(is_cached(url) && method == "GET"){
 			if(!has_if_modified_since){
 				IMS_time = 0;
 			}
@@ -27,32 +50,28 @@ run(){
 					return_status_code(200); 
 					return_cache(url);
 				}
-				if(milestone == 1)
-					break;
-				else
-					continue;
-			}			
+			}
 		}
-
 		forward_HTTP_request();
 		receive_HTTP_response();
 		parse_HTTP_response_header();
-		if(status_code == 200 && milestone == 3 && file_extension == ["html" || "jpg" || "gif" || "txt"]){
+		if(status_code == 200){
 			cache(web_object);
 		}else if(status_code == 304){
-			if( milestone == 3 && IMS_time < last_modified_time(url) && has_cache_control){
+			if( IMS_time < last_modified_time(url) && has_cache_control){
 				return_status_code(200);
 				return_cache(url);	
 			}else{
 				return_status_code(304);
-			}		
-			if(milestone == 1)
-				break;
-			else
-				continue;
+			}
+			continue;
 		}
 		forward_HTTP_response();
-		if(milestone == 1)
-			break;
-	}	
+	}
 }
+
+sig_handler(SIGPIPE){
+
+}
+
+
