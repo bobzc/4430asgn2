@@ -9,15 +9,20 @@ main(argv){
 	}
 }
 
+run_milestone_1(int fd){
+	HTTP_HEADER header;
+	char *request;
 
-run_milestone_1(){
-	receive_HTTP_request();
-	parse_HTTP_request_header();
-	change_HTTP_header();
-	forward_HTTP_request();
-	receive_HTTP_response();
-	parse_HTTP_response_header();
-	forward_HTTP_response();
+	receive_HTTP_request(fd, request);
+	parse_HTTP_request_header(request, &header);
+
+	change_HTTP_header(request);   // connection: close; proxy-connection: close;
+
+	forward_HTTP_request(request, header);
+
+	char *response;
+	receive_HTTP_response(response);
+	forward_HTTP_response(fd, response);
 }
 
 run_milestone_2(){
@@ -27,7 +32,6 @@ run_milestone_2(){
 		parse_HTTP_request_header();
 		forward_HTTP_request();
 		receive_HTTP_response();
-		parse_HTTP_response_header();
 		forward_HTTP_response();
 	}
 }
