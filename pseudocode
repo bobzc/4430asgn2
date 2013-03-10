@@ -1,6 +1,6 @@
 
 main(argv){
-	prot = argv[1]
+	port = argv[1]
 	milestone = argv[2];
 	while(1){
 		creat_socket();
@@ -9,31 +9,63 @@ main(argv){
 	}
 }
 
-run_milestone_1(int fd){
+char *receive_HTTP_request(int fd){
+	// read header from "fd" and return the pointer pointing to the result
+}
+
+void parse_HTTP_request_header(char *source, HTTP_HEADER *header){
+	// parse source and put useful info into header
+}
+
+change_HTTP_request(char *source){
+	// connection: close
+	// proxy-connection: close
+}
+
+int forward_HTTP_request(char *source, HTTP_HEADER header){
+	// open conn to host 	
+	// send source
+	// return fd to the host
+}
+
+run_milestone_1(int request_fd){
 	HTTP_HEADER header;
 	char *request;
 
-	receive_HTTP_request(fd, request);
+	request = receive_HTTP_request(request_fd);
 	parse_HTTP_request_header(request, &header);
 
 	change_HTTP_header(request);   // connection: close; proxy-connection: close;
 
-	forward_HTTP_request(request, header);
+	int response_fd = forward_HTTP_request(request, header);
 
 	char *response;
-	receive_HTTP_response(response);
-	forward_HTTP_response(fd, response);
+	receive_HTTP_response(response_fd, response);
+	forward_HTTP_response(request_fd, response);
+
+	free(response);
+	free(request);
+	close(fd);
 }
 
-run_milestone_2(){
-	keep_alive = true;
-	while(keep_alive){
-		receive_HTTP_request() & if timeout: break;
-		parse_HTTP_request_header();
-		forward_HTTP_request();
-		receive_HTTP_response();
-		forward_HTTP_response();
+run_milestone_2(int request_fd){
+	HTTP_HEADER header;
+	char *request;	
+
+	header.connection = true;
+	while(header.connection){
+		receive_HTTP_request(request_fd, request) & if timeout: break;
+		parse_HTTP_request_header(request, &header);
+		int response_fd = forward_HTTP_request(request, header);
+		
+		char *response;
+		receive_HTTP_response(response_fd, response);
+		forward_HTTP_response(request_fd, response);
+
+		free(response);
+		free(request);
 	}
+	close(fd);
 }
 
 run_milestone_3(){
