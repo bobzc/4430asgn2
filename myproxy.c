@@ -22,6 +22,7 @@ void mod_field(char *field, int *count, int cur_count){
 }
 
 
+
 void connection_off(char *buf, int *count){
 	char *position = buf - 2;
 	char *pre_position = buf - 2;
