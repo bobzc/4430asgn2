@@ -16,4 +16,5 @@
 #define CONN_CLOSE_FIELD "Connection: closed"
 #define PROXY_CONN_ALIVE_FIELD "Proxy-Connection: keep-alive"
 #define PROXY_CONN_CLOSE_FIELD "Proxy-Connection: closed"
+#define CONTENT_LEN_FIELD "Content-Length: "
 #define HOST_FIELD "Host: "
