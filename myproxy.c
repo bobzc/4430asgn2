@@ -5,6 +5,45 @@
 /*******************************************************************************************/
 /******************************* MILESTONE ONE BEGIN ***************************************/
 
+void get_domain_port(char *field, char **domain, char *port){
+		char *position = strstr(field, "\r\n");
+		int field_len = (int)(position - field);
+		char *msg = (char *)calloc(field_len + 1, sizeof(char));
+		memcpy(msg, field, field_len);
+		msg[field_len] = '\0';
+		char *p_domain = strtok(msg, ":");
+		char *p_port = strtok(NULL, ":");
+		if(p_port == NULL)
+			p_port = "80";
+		*domain = (char *)calloc(strlen(p_domain) + 1, sizeof(char));
+		*port = (char *)calloc(strlen(p_port) + 1, sizeof(char));
+		memcpy(*domain, p_domain, strlen(p_domain));
+		memcpy(*port, p_port, strlen(p_port));
+		*domain[strlen(p_domain)] = '\0';
+		*port[strlen(p_port)] = '\0';
+		printf("%s %s\n", *domain, *port);
+}
+
+void resolve_host(char *field, struct addrinfo *host_addr){
+	if(memcmp(field, HOST_FIELD, strlen(HOST_FIELD)) == 0){
+		char *domain, *port;
+		get_domain_port(field + strlen(HOST_FIELD), &domain, &port);		
+	
+		struct addrinfo hints;
+		memset(&hints, 0, sizeof(struct addrinfo));
+		hints.ai_family = AF_INET;
+		hints.ai_socktype = SOCK_STREAM;
+		hints.ai_flags = 0;
+		hints.ai_protocol = 0;
+		printf("|%s|   |%s|\n", domain, port);
+		if(getaddrinfo(domain, port, &hints, &host_addr) != 0){
+			perror("Error in getaddrinfo().");
+			exit(1);
+		}
+	}
+
+}
+
 void mod_field(char *field, int *count, int cur_count){
 	if(memcmp(field, CONN_ALIVE_FIELD, strlen(CONN_ALIVE_FIELD)) == 0){
 			char *from = field + strlen(CONN_ALIVE_FIELD);
@@ -21,15 +60,14 @@ void mod_field(char *field, int *count, int cur_count){
 	}
 }
 
-
-
-void connection_off(char *buf, int *count){
+void check_header(char *buf, struct addrinfo *host_addr, int *count){
 	char *position = buf - 2;
 	char *pre_position = buf - 2;
 	do{
 		pre_position = position;
 		position = strstr(position + 2, "\r\n");
 		mod_field(pre_position + 2, count, *count - (int)(pre_position - buf + 2));
+		resolve_host(pre_position + 2, host_addr);
 	}while((int)(position - pre_position) != 2);	
 	puts(buf);
 }
@@ -45,13 +83,21 @@ void milestone_1(int fd){
 	}
 //	printf("%d\n", count);
 //	puts(buf);
-	connection_off(buf, &count);
+	struct addrinfo *host_addr;
+	check_header(buf, host_addr, &count);
+	struct addrinfo *p_host_addr;
+	int i;
+//	for(i = 0; p_host_addr != NULL;p_host_addr = p_host_addr -> ai_next){
+//		struct sockaddr_in *sa = (struct sockaddr_in *)p_host_addr->ai_addr;
+//		printf("[%d] %s:%hd\n", i++,inet_ntoa(sa->sin_addr),ntohs(sa->sin_port));
+//	}
+
 	close(fd);
 }
 
-/*******************************************************************************************/
-/*******************************************************************************************/
 /******************************* MILESTONE ONE END *****************************************/
+/*******************************************************************************************/
+/*******************************************************************************************/
 
 void cleanup(){
 	printf("A thread cleans up.\n");
