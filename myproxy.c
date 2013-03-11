@@ -4,7 +4,7 @@
 /*******************************************************************************************/
 /*******************************************************************************************/
 /******************************* MILESTONE ONE BEGIN ***************************************/
-
+/*
 char *get_domain_port(char *field){
 		char *position = strstr(field, "\r\n");
 		int field_len = (int)(position - field);
@@ -36,34 +36,34 @@ void resolve_host(char *field, struct addrinfo **host_addr){
 	}
 }
 
-char mod_field(char *field, int *count, int cur_count){
-	if(memcmp(field, CONN_ALIVE_FIELD, strlen(CONN_ALIVE_FIELD)) == 0){
-			char *from = field + strlen(CONN_ALIVE_FIELD);
-			char *to = field + strlen(CONN_CLOSE_FIELD);
-			memcpy(field, CONN_CLOSE_FIELD, strlen(CONN_CLOSE_FIELD));
-			memmove(to, from, cur_count - strlen(CONN_ALIVE_FIELD));
-			*count -= strlen(CONN_ALIVE_FIELD) - strlen(CONN_CLOSE_FIELD);
-			return 0;
-	}else if(memcmp(field, PROXY_CONN_ALIVE_FIELD, strlen(PROXY_CONN_ALIVE_FIELD)) == 0){
-			char *from = field + strlen(PROXY_CONN_ALIVE_FIELD);
-			char *to = field + strlen(PROXY_CONN_CLOSE_FIELD);
-			memcpy(field, PROXY_CONN_CLOSE_FIELD, strlen(PROXY_CONN_CLOSE_FIELD));
-			memmove(to, from, cur_count - strlen(PROXY_CONN_ALIVE_FIELD));
-			*count -= strlen(PROXY_CONN_ALIVE_FIELD) - strlen(PROXY_CONN_CLOSE_FIELD);
-			return 1;
-	}
-	return 0;
+void mod_field(char *begin, char *end, int length, char *content){
+	char *from = end;
+	char *to = begin + strlen(content);
+	strcpy(begin, content);
+	memmove(to, from, length);
 }
 
-void check_request_header(char *buf, struct addrinfo **host_addr, int *count){
-	char *position = buf - 2;
-	char *pre_position = buf - 2;
+int proc_req(char *buf_begin, char *buf_end, struct addrinfo **host_addr){
+	char *field_begin = buf_begin - 2;
+	char *field_end = buf_begin - 2;
+	int field_len;
 	do{
-		pre_position = position;
-		position = strstr(position + 2, "\r\n");
-		mod_field(pre_position + 2, count, *count - (int)(pre_position - buf + 2));
-		resolve_host(pre_position + 2, host_addr);
-	}while((int)(position - pre_position) != 2);	
+		field_begin = field_end + 2;
+		field_end = strstr(field_begin, "\r\n");
+		field_len = (int)(field_end - field_begin);
+		if(strncmp(field_begin, CONN_ALIVE_FIELD, field_len) == 0){
+			int gap = strlen(CONN_ALIVE_FIELD) - strlen(CONN_CLOSE_FIELD);
+			mod_field(field_begin, field_end, (int)(buf_end - field_end), CONN_CLOSE_FIELD);
+			field_end -= gap;
+			buf_end -= gap;
+		}else if(strncmp(field_begin, PROXY_CONN_ALIVE_FIELD, field_len) == 0){
+			int gap = strlen(PROXY_CONN_ALIVE_FIELD) - strlen(PROXY_CONN_CLOSE_FIELD);
+			mod_field(field_begin, field_end, (int)(buf_end - field_end), PROXY_CONN_CLOSE_FIELD);
+			field_end -= gap;
+			buf_end -= gap;
+		}
+	}while(field_len != 0);	
+	return (int)(buf_end - buf_begin);
 }
 
 void insert_proxy_conn(char *buf, int *count){
@@ -149,23 +149,99 @@ int forward_request(char *buf, int count, struct addrinfo *host_addr){
 	}
 	return -1;
 
+}*/
+
+
+void resolve_host(char *field, struct addrinfo **host_addr){
+	if(memcmp(field, HOST_FIELD, strlen(HOST_FIELD)) == 0){
+		char *addr = get_domain_port(field + strlen(HOST_FIELD));		
+		char *domain = strtok(addr, ":");
+		char *port = strtok(NULL, ":");
+		if(port == NULL)
+			port = "80";
+
+		struct addrinfo hints;
+		memset(&hints, 0, sizeof(struct addrinfo));
+		hints.ai_family = AF_INET;
+		hints.ai_socktype = SOCK_STREAM;
+		hints.ai_flags = 0;
+		hints.ai_protocol = 0;
+		if(getaddrinfo(domain, port, &hints, host_addr) != 0){
+			perror("Error in getaddrinfo().");
+			pthread_exit(NULL);
+		}
+		free(addr);
+	}
 }
+
+
+
+/* modify field to value 'content' */
+
+void mod_field(char *begin, char *end, int length, char *content){
+	char *from = end;
+	char *to = begin + strlen(content);
+	strcpy(begin, content);
+	memmove(to, from, length);
+}
+
+char *get_field_value(char *begin, char *end){
+	char *ret = (char *)malloc((int)(end - begin) + 1, sizeof(char));
+	strncpy(ret, begin, (int)(end - begin));
+	ret[(int)(end - begin)] = '\0';
+	return ret;
+}
+
+/* process request, and get host address */
+
+int proc_req(char *buf_begin, char *buf_end, struct addrinfo **host_addr){
+	char *field_begin = buf_begin - 2;
+	char *field_end = buf_begin - 2;
+	int field_len;
+	do{
+		field_begin = field_end + 2;
+		field_end = strstr(field_begin, "\r\n");
+		field_len = (int)(field_end - field_begin);
+		if(strncmp(field_begin, CONN_ALIVE_FIELD, strlen(CONN_ALIVE_FIELD)) == 0){
+			int gap = strlen(CONN_ALIVE_FIELD) - strlen(CONN_CLOSE_FIELD);
+			mod_field(field_begin, field_end, (int)(buf_end - field_end), CONN_CLOSE_FIELD);
+			field_end -= gap;
+			buf_end -= gap;
+		}else if(strncmp(field_begin, PROXY_CONN_ALIVE_FIELD, strlen(PROXY_CONN_ALIVE_FIELD)) == 0){
+			int gap = strlen(PROXY_CONN_ALIVE_FIELD) - strlen(PROXY_CONN_CLOSE_FIELD);
+			mod_field(field_begin, field_end, (int)(buf_end - field_end), PROXY_CONN_CLOSE_FIELD);
+			field_end -= gap;
+			buf_end -= gap;
+		}else if(strncmp(field_begin, HOST_FIELD, strlen(HOST_FIELD)) == 0){
+			char *val = get_field_value(field_begin + strlen(HOST_FIELD), field_end);
+			resolve_host(val, host_addr);
+		}
+	}while(field_len != 0);	
+	return (int)(buf_end - buf_begin);
+}
+
 
 
 void milestone_1(int fd){
 	int count;
+	int total_count = 0;
 	char buf[HEADER_BUFFER_SIZE];
 	memset(buf, 0, HEADER_BUFFER_SIZE);
-	if((count = read(fd, buf, HEADER_BUFFER_SIZE)) < 0){
-		perror("Read error.");
-		pthread_exit(NULL);
-	}
 
-	printf("Get request: |%s|\n", buf);
+	total_count = read(fd, buf, HEADER_BUFFER_SIZE);
+
+	printf("Get request header(%d):\n", total_count);
+	write(1, buf, total_count);
+	
+	/* process request header, and get host address */
 	struct addrinfo *host_addr;
-	check_request_header(buf, &host_addr, &count);
+	total_count = proc_req(buf, buf + total_count, &host_addr);
+	
+	printf("Processed request header(%d):\n", total_count);
+	write(1, buf, total_count);
+	
+/*	
 	printf("HTTP header changed: |%s|\n", buf);
-//	printf("%d\n", count);
 	struct addrinfo *p_host_addr = host_addr;
 	int i;
 	for(i = 0; p_host_addr != NULL;p_host_addr = p_host_addr -> ai_next){
@@ -177,6 +253,7 @@ void milestone_1(int fd){
 	forward_response(fd, server_fd);
 	freeaddrinfo(host_addr);
 	close(fd);
+*/
 }
 
 /******************************* MILESTONE ONE END *****************************************/
@@ -189,10 +266,12 @@ void cleanup(){
 
 void *run(void *args){
 	pthread_cleanup_push(cleanup, NULL);
+	printf("\n\n------------------ thread begin ---------------------\n");
 	int fd = *((int *)args);
 	int milestone = *((int *)args + 1);
 	if(milestone == 1)
 		milestone_1(fd);
+	printf("\n------------------- thread end ------------------------\n");
 	pthread_cleanup_pop(1);
 }
 
