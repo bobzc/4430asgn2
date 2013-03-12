@@ -4,64 +4,35 @@
 /*******************************************************************************************/
 /*******************************************************************************************/
 /******************************* MILESTONE ONE BEGIN ***************************************/
-/*
 
-void insert_proxy_conn(char *buf, int *count){
-	char *position = strstr(buf, "\r\n");
-	char *from = position + 2;
-	char *to = from + strlen(PROXY_CONN_CLOSE_FIELD) + 2;
-	memmove(to, from, *count - (int)(position - buf + 2) );
-	*count = *count + strlen(PROXY_CONN_CLOSE_FIELD) + 2;
-	memcpy(from, PROXY_CONN_CLOSE_FIELD, strlen(PROXY_CONN_CLOSE_FIELD));
-	from[strlen(PROXY_CONN_CLOSE_FIELD)] = '\r';
-	from[strlen(PROXY_CONN_CLOSE_FIELD) + 1] = '\n';
-}
 
-int get_content_len(char *begin, char *end){
-	if(memcmp(begin, CONTENT_LEN_FIELD, strlen(CONTENT_LEN_FIELD)) == 0){
-		char num[10];
-		int num_len = (int)(end - begin) - strlen(CONTENT_LEN_FIELD);
-		strncpy(num, begin + strlen(CONTENT_LEN_FIELD), num_len);
-		num[num_len] = '\0';
-		return atoi(num);
+/* case insensitive compare*/
+int strncmp_i(char *a, char *b, int len){
+	int i = 0;
+	for(i = 0; i < len; i++){
+		if(toupper(a[i]) != toupper(b[i]))
+			return 1;
 	}
 	return 0;
 }
 
-int check_response_header(char *buf, int *count, int *header_len){
-	char *position = buf - 2;
-	char *pre_position = buf - 2;
-	char has_proxy_conn = 0;
-	int content_len = 0;
-	do{
-		pre_position = position;
-		position = strstr(position + 2, "\r\n");
-		content_len += get_content_len(pre_position + 2, position);
-		has_proxy_conn += mod_field(pre_position + 2, count, *count - (int)(pre_position - buf + 2));
-	}while((int)(position - pre_position) != 2);	
-	*header_len = (int) (position - buf);
-	if(has_proxy_conn){
-		insert_proxy_conn(buf, count);
-		*header_len += strlen(PROXY_CONN_CLOSE_FIELD) + 2;
-	}
-	return content_len;
-}
-*/
-
+/* get the value of a field */
 char *get_field_value(char *begin, char *end){
 	char *ret = (char *)calloc((int)(end - begin) + 1, sizeof(char));
-	strncpy(ret, begin, (int)(end - begin));
+	memcpy(ret, begin, (int)(end - begin));
 	ret[(int)(end - begin)] = '\0';
 	return ret;
 }
 
+/* modify the value of a field*/
 void mod_field(char *begin, char *end, int length, char *content){
 	char *from = end;
 	char *to = begin + strlen(content);
 	memmove(to, from, length);
-	strcpy(begin, content);
+	memcpy(begin, content, strlen(content));
 }
 
+/* process response */
 int proc_rpn(char *buf_begin, char *buf_end, int *cont_len, int *header_len){
 	char *field_begin = buf_begin - 2;
 	char *field_end = buf_begin - 2;
@@ -71,22 +42,24 @@ int proc_rpn(char *buf_begin, char *buf_end, int *cont_len, int *header_len){
 		field_begin = field_end + 2;
 		field_end = strstr(field_begin, "\r\n");
 		field_len = (int)(field_end - field_begin);
-		if(strncmp(field_begin, CONN_ALIVE_FIELD, strlen(CONN_ALIVE_FIELD)) == 0){
+		/* process Connection, Proxy-Connection and content-length field */
+		if(strncmp_i(field_begin, CONN_ALIVE_FIELD, strlen(CONN_ALIVE_FIELD)) == 0){
 			int gap = strlen(CONN_ALIVE_FIELD) - strlen(CONN_CLOSE_FIELD);
 			mod_field(field_begin, field_end, (int)(buf_end - field_end), CONN_CLOSE_FIELD);
 			field_end -= gap;
 			buf_end -= gap;
-		}else if(strncmp(field_begin, PROXY_CONN_ALIVE_FIELD, strlen(PROXY_CONN_ALIVE_FIELD)) == 0){
+		}else if(strncmp_i(field_begin, PROXY_CONN_ALIVE_FIELD, strlen(PROXY_CONN_ALIVE_FIELD)) == 0){
 			int gap = strlen(PROXY_CONN_ALIVE_FIELD) - strlen(PROXY_CONN_CLOSE_FIELD);
 			mod_field(field_begin, field_end, (int)(buf_end - field_end), PROXY_CONN_CLOSE_FIELD);
 			field_end -= gap;
 			buf_end -= gap;
 			has_proxy_field = 1;
-		}else if(strncmp(field_begin, CONTENT_LEN_FIELD, strlen(CONTENT_LEN_FIELD)) == 0){
+		}else if(strncmp_i(field_begin, CONTENT_LEN_FIELD, strlen(CONTENT_LEN_FIELD)) == 0){
 			char *val = get_field_value(field_begin + strlen(CONTENT_LEN_FIELD), field_end);
 			*cont_len = atoi(val);
 		}
 	}while(field_len != 0);
+	/* if the header do not have proxy-connection field, append one */
 	if(!has_proxy_field){
 		mod_field(field_begin, field_end, (int)(buf_end - field_end), PROXY_CONN_CLOSE_FIELD_B);
 		buf_end += strlen(PROXY_CONN_CLOSE_FIELD_B);
@@ -97,14 +70,14 @@ int proc_rpn(char *buf_begin, char *buf_end, int *cont_len, int *header_len){
 	return (int)(buf_end - buf_begin);
 }
 
-
+/* forward response */
 void fwd_rpn(int client_fd, int server_fd){
 	int count;
 	int header_len = 0;
 	int cont_len = 0;
 	int buf_len;
 	char buf[HEADER_BUFFER_SIZE];
-	
+	/* receive response from web server */
 	memset(buf, 0, HEADER_BUFFER_SIZE);
 	if((count = read(server_fd, buf, HEADER_BUFFER_SIZE - 256)) < 0){
 		perror("Read error.");
@@ -112,7 +85,7 @@ void fwd_rpn(int client_fd, int server_fd){
 	}
 
 	buf_len = proc_rpn(buf, buf + count, &cont_len, &header_len);
-	printf("Modified Response header:\n");
+/*	printf("Modified Response header:\n");
 	write(1, buf, header_len);
 	printf("-----------------------------------------\n");
 	printf("Received: %d\n", count);
@@ -120,12 +93,8 @@ void fwd_rpn(int client_fd, int server_fd){
 	printf("Response content length: %d\n", cont_len);
 	printf("Response buffer length: %d\n", buf_len);
 	printf("-----------------------------------------\n");
-/*	write(client_fd, buf, header_len);
-	int sent_cnt = 0;
-	if(sent_cnt < cont_len){
-		write(client_fd, buf + header_len, buf_len - header_len);
-		sent_cnt += (int)(buf_len - header_len);
-	}*/
+*/
+	/* send response to browser */
 	write(client_fd, buf, buf_len);
 	int sent_cnt = buf_len - header_len;
 	while(sent_cnt < cont_len){
@@ -133,20 +102,12 @@ void fwd_rpn(int client_fd, int server_fd){
 		write(client_fd, buf, recv_cnt);
 		sent_cnt += recv_cnt;
 	}
-	printf("Forwarded content length: %d\n", sent_cnt);
-	printf("-----------------------------------------\n");
-
-//	while(count < content_len + header_len){
-//		printf("1\n");
-//		int count_cur = read(server_fd, buf, sizeof(buf));
-//		write(client_fd, buf, count_cur);
-//		count += count_cur;
-//	}
+//	printf("Forwarded content length: %d\n", sent_cnt);
+//	printf("-----------------------------------------\n");
 }
 
 
 /* forward request and return fd */
-
 int fwd_req(char *buf, int count, struct addrinfo *host_addr){
 	struct addrinfo *p_host_addr = host_addr;
 	int i;
@@ -168,7 +129,6 @@ int fwd_req(char *buf, int count, struct addrinfo *host_addr){
 }
 
 /* resolve host according to field */
-
 void resolve_host(char *field, struct addrinfo **host_addr){
 		char *domain = strtok(field, ":");
 		char *port = strtok(NULL, ":");
@@ -188,10 +148,6 @@ void resolve_host(char *field, struct addrinfo **host_addr){
 		free(field);
 }
 
-/* modify field to value 'content' */
-
-
-
 /* process request, and get host address and return header length */
 
 int proc_req(char *buf_begin, char *buf_end, struct addrinfo **host_addr){
@@ -202,17 +158,18 @@ int proc_req(char *buf_begin, char *buf_end, struct addrinfo **host_addr){
 		field_begin = field_end + 2;
 		field_end = strstr(field_begin, "\r\n");
 		field_len = (int)(field_end - field_begin);
-		if(strncmp(field_begin, CONN_ALIVE_FIELD, strlen(CONN_ALIVE_FIELD)) == 0){
+		/* handle connection, proxy-connection, host field */
+		if(strncmp_i(field_begin, CONN_ALIVE_FIELD, strlen(CONN_ALIVE_FIELD)) == 0){
 			int gap = strlen(CONN_ALIVE_FIELD) - strlen(CONN_CLOSE_FIELD);
 			mod_field(field_begin, field_end, (int)(buf_end - field_end), CONN_CLOSE_FIELD);
 			field_end -= gap;
 			buf_end -= gap;
-		}else if(strncmp(field_begin, PROXY_CONN_ALIVE_FIELD, strlen(PROXY_CONN_ALIVE_FIELD)) == 0){
+		}else if(strncmp_i(field_begin, PROXY_CONN_ALIVE_FIELD, strlen(PROXY_CONN_ALIVE_FIELD)) == 0){
 			int gap = strlen(PROXY_CONN_ALIVE_FIELD) - strlen(PROXY_CONN_CLOSE_FIELD);
 			mod_field(field_begin, field_end, (int)(buf_end - field_end), PROXY_CONN_CLOSE_FIELD);
 			field_end -= gap;
 			buf_end -= gap;
-		}else if(strncmp(field_begin, HOST_FIELD, strlen(HOST_FIELD)) == 0){
+		}else if(strncmp_i(field_begin, HOST_FIELD, strlen(HOST_FIELD)) == 0){
 			char *val = get_field_value(field_begin + strlen(HOST_FIELD), field_end);
 			resolve_host(val, host_addr);
 		}
@@ -227,23 +184,25 @@ void milestone_1(int fd){
 	int total_count = 0;
 	char buf[HEADER_BUFFER_SIZE];
 	memset(buf, 0, HEADER_BUFFER_SIZE);
-
-	total_count = read(fd, buf, HEADER_BUFFER_SIZE);
-
+	int wait_max = 0;
+	while(total_count == 0){
+		total_count = read(fd, buf, HEADER_BUFFER_SIZE);
+	}
+	if(total_count <= 0)
+		pthread_exit(NULL);
 	printf("Get request header(%d):\n", total_count);
-	write(1, buf, total_count);
-	printf("-----------------------------------------\n");
+//	write(1, buf, total_count);
+//	printf("-----------------------------------------\n");
 	/* process request header, and get host address */
 	struct addrinfo *host_addr;
 	total_count = proc_req(buf, buf + total_count, &host_addr);
 	
-	printf("Processed request header(%d):\n", total_count);
+/*	printf("Processed request header(%d):\n", total_count);
 	write(1, buf, total_count);
 	printf("-----------------------------------------\n");
-	
+*/
 
-
-	printf("Resolve host: \n");
+/*	printf("Resolve host: \n");
 	struct addrinfo *p_host_addr = host_addr;
 	int i;
 	for(i = 0; p_host_addr != NULL;p_host_addr = p_host_addr -> ai_next){
@@ -251,11 +210,13 @@ void milestone_1(int fd){
 		printf("[%d] %s:%hd\n", i++,inet_ntoa(sa->sin_addr),ntohs(sa->sin_port));
 	}
 	printf("-----------------------------------------\n");
+*/
 	int server_fd;
 	if((server_fd = fwd_req(buf, total_count, host_addr)) != -1){
-		printf("Forwarding request finished.\n");
-		printf("-----------------------------------------\n");
+		printf("Forward request.\n");
 		fwd_rpn(fd, server_fd);
+		printf("Response finished\n");
+		printf("-----------------------------------------\n");
 		close(server_fd);
 	}
 	freeaddrinfo(host_addr);
@@ -282,6 +243,7 @@ void *run(void *args){
 }
 
 int main(int argc, char **argv){
+	signal(SIGPIPE, SIG_IGN);
 	if(argc != 3){
 		printf("Usage: %s [port] [milestone]\n", argv[0]);
 		exit(1);

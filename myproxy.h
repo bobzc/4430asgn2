@@ -10,12 +10,13 @@
 #include<netinet/in.h>
 #include<arpa/inet.h>
 #include<netdb.h>
+#include<signal.h>
 
 #define HEADER_BUFFER_SIZE 16384
 #define CONN_ALIVE_FIELD "Connection: keep-alive"
-#define CONN_CLOSE_FIELD "Connection: closed"
+#define CONN_CLOSE_FIELD "Connection: close"
 #define PROXY_CONN_ALIVE_FIELD "Proxy-Connection: keep-alive"
-#define PROXY_CONN_CLOSE_FIELD "Proxy-Connection: closed"
-#define PROXY_CONN_CLOSE_FIELD_B "Proxy-Connection: closed\r\n"
+#define PROXY_CONN_CLOSE_FIELD "Proxy-Connection: close"
+#define PROXY_CONN_CLOSE_FIELD_B "Proxy-Connection: close\r\n"
 #define CONTENT_LEN_FIELD "Content-Length: "
 #define HOST_FIELD "Host: "
