@@ -95,7 +95,10 @@ void fwd_rpn(int client_fd, int server_fd){
 	printf("-----------------------------------------\n");
 */
 	/* send response to browser */
-	write(client_fd, buf, buf_len);
+	count = 0;	
+	while(count < buf_len){
+		count += write(client_fd, buf, buf_len);
+	}
 	int sent_cnt = buf_len - header_len;
 	while(sent_cnt < cont_len){
 		int recv_cnt = read(server_fd, buf, sizeof(buf));
@@ -185,7 +188,7 @@ void milestone_1(int fd){
 	char buf[HEADER_BUFFER_SIZE];
 	memset(buf, 0, HEADER_BUFFER_SIZE);
 	int wait_max = 0;
-	while(total_count == 0){
+	while(total_count <= 100){
 		total_count = read(fd, buf, HEADER_BUFFER_SIZE);
 	}
 	if(total_count <= 0)
