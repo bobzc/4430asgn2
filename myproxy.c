@@ -1,5 +1,9 @@
 #include"myproxy.h"
 
+int tn = 0;
+
+HOST_INFO host_info[10];
+
 
 /*******************************************************************************************/
 /*******************************************************************************************/
@@ -38,6 +42,7 @@ int proc_rpn(char *buf_begin, char *buf_end, int *cont_len, int *header_len){
 	char *field_end = buf_begin - 2;
 	int field_len;
 	int has_proxy_field = 0;
+	int has_conn_field = 0;
 	do{
 		field_begin = field_end + 2;
 		field_end = strstr(field_begin, "\r\n");
@@ -48,6 +53,7 @@ int proc_rpn(char *buf_begin, char *buf_end, int *cont_len, int *header_len){
 			mod_field(field_begin, field_end, (int)(buf_end - field_end), CONN_CLOSE_FIELD);
 			field_end -= gap;
 			buf_end -= gap;
+			has_conn_field = 1;
 		}else if(strncmp_i(field_begin, PROXY_CONN_ALIVE_FIELD, strlen(PROXY_CONN_ALIVE_FIELD)) == 0){
 			int gap = strlen(PROXY_CONN_ALIVE_FIELD) - strlen(PROXY_CONN_CLOSE_FIELD);
 			mod_field(field_begin, field_end, (int)(buf_end - field_end), PROXY_CONN_CLOSE_FIELD);
@@ -60,7 +66,7 @@ int proc_rpn(char *buf_begin, char *buf_end, int *cont_len, int *header_len){
 		}
 	}while(field_len != 0);
 	/* if the header do not have proxy-connection field, append one */
-	if(!has_proxy_field){
+	if(!has_proxy_field && !has_conn_field){
 		mod_field(field_begin, field_end, (int)(buf_end - field_end), PROXY_CONN_CLOSE_FIELD_B);
 		buf_end += strlen(PROXY_CONN_CLOSE_FIELD_B);
 		field_end += strlen(PROXY_CONN_CLOSE_FIELD_B);
@@ -73,40 +79,49 @@ int proc_rpn(char *buf_begin, char *buf_end, int *cont_len, int *header_len){
 /* forward response */
 void fwd_rpn(int client_fd, int server_fd){
 	int count;
+	int total_count = 0;
 	int header_len = 0;
 	int cont_len = 0;
 	int buf_len;
 	char buf[HEADER_BUFFER_SIZE];
 	/* receive response from web server */
 	memset(buf, 0, HEADER_BUFFER_SIZE);
-	if((count = read(server_fd, buf, HEADER_BUFFER_SIZE - 256)) < 0){
-		perror("Read error.");
+
+
+
+	while(total_count < HEADER_BUFFER_SIZE - 256 &&
+		(count = recv(server_fd, buf + total_count, HEADER_BUFFER_SIZE - 256 - total_count, 0)) > 0){
+		total_count += count;
+	}
+	if(total_count <= 0){
+		perror("Read Error.");
 		pthread_exit(NULL);
 	}
 
-	buf_len = proc_rpn(buf, buf + count, &cont_len, &header_len);
-/*	printf("Modified Response header:\n");
+	buf_len = proc_rpn(buf, buf + total_count, &cont_len, &header_len);
+	printf("Modified Response header:\n");
 	write(1, buf, header_len);
 	printf("-----------------------------------------\n");
-	printf("Received: %d\n", count);
+	printf("Received: %d\n", total_count);
 	printf("Response header length: %d\n", header_len);
 	printf("Response content length: %d\n", cont_len);
 	printf("Response buffer length: %d\n", buf_len);
 	printf("-----------------------------------------\n");
-*/
+
 	/* send response to browser */
 	count = 0;	
 	while(count < buf_len){
-		count += write(client_fd, buf, buf_len);
+		count += send(client_fd, buf + count, buf_len - count, 0);
 	}
 	int sent_cnt = buf_len - header_len;
+	printf("%d %d\n", sent_cnt, cont_len);
 	while(sent_cnt < cont_len){
-		int recv_cnt = read(server_fd, buf, sizeof(buf));
-		write(client_fd, buf, recv_cnt);
+		int recv_cnt = recv(server_fd, buf, sizeof(buf), 0);
+		send(client_fd, buf, recv_cnt, 0);
 		sent_cnt += recv_cnt;
 	}
-//	printf("Forwarded content length: %d\n", sent_cnt);
-//	printf("-----------------------------------------\n");
+	printf("Forwarded content length: %d\n", sent_cnt);
+	printf("-----------------------------------------\n");
 }
 
 
@@ -125,7 +140,7 @@ int fwd_req(char *buf, int count, struct addrinfo *host_addr){
 			perror("Cannot connect to server.");
 			continue;
 		}
-		write(fd, buf, count);
+		send(fd, buf, count, 0);
 		return fd;
 	}
 	return -1;
@@ -183,37 +198,32 @@ int proc_req(char *buf_begin, char *buf_end, struct addrinfo **host_addr){
 
 
 void milestone_1(int fd){
+	printf("Accept connection\n");
+
 	int count;
 	int total_count = 0;
 	char buf[HEADER_BUFFER_SIZE];
 	memset(buf, 0, HEADER_BUFFER_SIZE);
-	int wait_max = 0;
-	while(total_count <= 100){
-		total_count = read(fd, buf, HEADER_BUFFER_SIZE);
-	}
+
+	do{
+		count = recv(fd, buf + total_count, HEADER_BUFFER_SIZE - total_count, 0);
+		total_count += count;
+	}while(total_count > 0 && strstr(buf, "\r\n\r\n") == NULL);
+
 	if(total_count <= 0)
 		pthread_exit(NULL);
+
 	printf("Get request header(%d):\n", total_count);
-//	write(1, buf, total_count);
-//	printf("-----------------------------------------\n");
+	write(1, buf, total_count);
+	printf("-----------------------------------------\n");
 	/* process request header, and get host address */
 	struct addrinfo *host_addr;
 	total_count = proc_req(buf, buf + total_count, &host_addr);
 	
-/*	printf("Processed request header(%d):\n", total_count);
+	printf("Processed request header(%d):\n", total_count);
 	write(1, buf, total_count);
 	printf("-----------------------------------------\n");
-*/
 
-/*	printf("Resolve host: \n");
-	struct addrinfo *p_host_addr = host_addr;
-	int i;
-	for(i = 0; p_host_addr != NULL;p_host_addr = p_host_addr -> ai_next){
-		struct sockaddr_in *sa = (struct sockaddr_in *)p_host_addr->ai_addr;
-		printf("[%d] %s:%hd\n", i++,inet_ntoa(sa->sin_addr),ntohs(sa->sin_port));
-	}
-	printf("-----------------------------------------\n");
-*/
 	int server_fd;
 	if((server_fd = fwd_req(buf, total_count, host_addr)) != -1){
 		printf("Forward request.\n");
@@ -230,17 +240,170 @@ void milestone_1(int fd){
 /*******************************************************************************************/
 /*******************************************************************************************/
 
+
+
+
+
+/*******************************************************************************************/
+/*******************************************************************************************/
+/******************************* MILESTONE TWO START *****************************************/
+
+
+/* compare ip addr and port num */
+
+int sock_addr_cmp_addr(const struct sockaddr *sa, const struct sockaddr *sb){
+	if(sa -> sa_family != sb -> sa_family){
+		return (sa -> sa_family - sb -> sa_family);
+	}
+	if(sa -> sa_family == AF_INET){
+		return (SOCK_ADDR_IN_ADDR(sa).s_addr - SOCK_ADDR_IN_ADDR(sb).s_addr);
+	}
+}
+
+int sock_addr_cmp_port(const struct sockaddr *sa, const struct sockaddr *sb){
+	if(sa -> sa_family != sb -> sa_family){
+		return (sa -> sa_family - sb -> sa_family);
+	}
+	if(sa -> sa_family == AF_INET){
+		return (SOCK_ADDR_IN_PORT(sa) - SOCK_ADDR_IN_PORT(sb));
+	}	
+}
+
+
+int is_conn_alive(char *buf_begin, char *buf_end){
+	char *field_begin = buf_begin - 2;
+	char *field_end = buf_begin - 2;
+	int field_len;
+	do{
+		field_begin = field_end + 2;
+		field_end = strstr(field_begin, "\r\n");
+		field_len = (int)(field_end - field_begin);
+		if(strncmp_i(field_begin, CONN_CLOSE_FIELD, strlen(CONN_CLOSE_FIELD)) == 0){
+			return 0;
+		}else if(strncmp_i(field_begin, PROXY_CONN_CLOSE_FIELD, strlen(PROXY_CONN_CLOSE_FIELD)) == 0){
+			return 0;
+		}
+	}while(field_len != 0);
+	return 1;
+}
+
+
+/* get host addr */
+void get_host(char *buf_begin, char *buf_end, struct addrinfo **host_addr){
+	char *field_begin = buf_begin - 2;
+	char *field_end = buf_begin - 2;
+	int field_len;
+	do{
+		field_begin = field_end + 2;
+		field_end = strstr(field_begin, "\r\n");
+		field_len = (int)(field_end - field_begin);
+		if(strncmp_i(field_begin, HOST_FIELD, strlen(HOST_FIELD)) == 0){
+			char *val = get_field_value(field_begin + strlen(HOST_FIELD), field_end);
+			resolve_host(val, host_addr);
+			return;
+		}
+	}while(field_len != 0);
+}
+
+int find_fd(struct sockaddr *sa){
+	int fd = 0;
+	int slot = -1;
+	for(int i = 0; i < 10; i++){
+		if(host_info[i].is_taken == 0){
+			slot = i;
+			continue;
+		}else if(sock_addr_cmp_addr(sa, &host_info[i].sa) == 0
+			&& sock_addr_cmp_port(sa, &host_info[i].sa) == 0){
+			return host_info[i].fd;
+		}
+	}
+	
+	if((fd = socket(AF_INET, SOCK_STREAM, 0)) == -1){
+		perror("Cannot initialize socket.");
+		pthread_exit(NULL);
+	}
+	if(connect(fd, (struct sockaddr *)sa, sizeof(struct sockaddr)) == -1){
+		perror("Cannot connect to server.");
+		pthread_exit(NULL);
+	}
+		
+	if(slot == -1){
+		int slot = rand() % 10;
+	}
+	
+	host_info[slot].fd = fd;
+	host_info[slot].is_taken = 1;
+	memcpy(&host_info[slot].sa, sa, sizeof(struct sockaddr));
+	return fd;
+}
+
+
+void milestone_2(int fd){
+	int count, total_count = 0;
+	int conn_flag;
+	struct addrinfo *host_addr;
+	int server_fd;
+
+	char buf[HEADER_BUFFER_SIZE];
+	memset(buf, 0, HEADER_BUFFER_SIZE);
+	
+	/* receive request */
+	do{
+		count = recv(fd, buf + total_count, HEADER_BUFFER_SIZE - total_count, 0);
+		total_count += count;
+	}while(total_count > 0 && strstr(buf, "\r\n\r\n") == NULL);
+
+	if(total_count <= 0)
+		pthread_exit(NULL);
+
+	conn_flag = is_conn_alive(buf, buf + total_count);
+
+	/* get host address */
+	get_host(buf, buf + total_count, &host_addr);
+
+	if(host_addr == NULL){
+		perror("Cannot get host addr.");
+		pthread_exit(NULL);
+	}
+	
+	/* mapping host addr */
+	server_fd = find_fd((struct sockaddr *)host_addr->ai_addr);
+
+	
+	send(server_fd, buf, total_count, 0);
+	
+	count = recv(server_fd, buf, HEADER_BUFFER_SIZE, 0);
+	write(fd, buf, count);
+}
+
+
+
+
+
+
+
+
+/******************************* MILESTONE TWO END *****************************************/
+/*******************************************************************************************/
+/*******************************************************************************************/
+
+
+
 void cleanup(){
+	printf("thread num: %d\n", --tn);
 	printf("A thread cleans up.\n");
 }
 
 void *run(void *args){
 	pthread_cleanup_push(cleanup, NULL);
 	printf("\n\n################# thread begin ######################\n");
+	printf("thread num: %d\n", ++tn);
 	int fd = *((int *)args);
 	int milestone = *((int *)args + 1);
 	if(milestone == 1)
 		milestone_1(fd);
+	if(milestone == 2)
+		milestone_2(fd);
 	printf("\n################# thread end ####################\n");
 	pthread_cleanup_pop(1);
 }
