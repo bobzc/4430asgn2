@@ -71,7 +71,7 @@ int mod_rpn(char *buf_begin, char *buf_end){
 		}
 	}while(field_len != 0);
 	/* if the header do not have proxy-connection field, append one */
-	if(!has_proxy_field && !has_conn_field){
+	if(!has_proxy_field){
 		mod_field(field_begin, field_end, (int)(buf_end - field_end), PROXY_CONN_CLOSE_FIELD_B);
 		buf_end += strlen(PROXY_CONN_CLOSE_FIELD_B);
 		field_end += strlen(PROXY_CONN_CLOSE_FIELD_B);
@@ -101,6 +101,8 @@ void resolve_host(char *field, struct addrinfo **host_addr){
 		free(field);
 }
 
+
+/* connect to server */
 int conn_srv(struct sockaddr *sa){
 	int fd = 0;
 	if((fd = socket(AF_INET, SOCK_STREAM, 0)) == -1){
@@ -166,12 +168,14 @@ void milestone_1(int fd){
 
 		char *tmp;
 		req_begin = req_begin_next;
-	//	write(1, req_begin, 400);
 		if((tmp = strstr(req_begin, "\r\n\r\n")) == NULL){
 			break;	
 		}
+			
 		req_end = tmp + 4;
 		req_begin_next = req_end;
+
+		printf("Handling request...(%d Bytes)\n", (int)(req_end - req_begin));
 
 		/* get host address */
 		get_host(req_begin, req_end, &host_addr);
@@ -186,7 +190,6 @@ void milestone_1(int fd){
 	
 		server_fd = conn_srv((struct sockaddr *)host_addr -> ai_addr);
 	
-		write(1, req_begin, (int)(req_end - req_begin) - count);
 		while(count < (int)(req_end - req_begin)){
 			count += send(server_fd, req_begin + count, (int)(req_end - req_begin) - count, 0);
 		}
@@ -523,15 +526,28 @@ void milestone_2(int fd){
 
 
 
+/*******************************************************************************************/
+/*******************************************************************************************/
+/******************************* MILESTONE THREE BEGIN *************************************/
+
+
+
+
+
+
+
+/******************************* MILESTONE THREE END ***************************************/
+/*******************************************************************************************/
+/*******************************************************************************************/
+
+
 void cleanup(){
-	printf("thread num: %d\n", --tn);
 	printf("\n################# thread end ####################\n");
 }
 
 void *run(void *args){
 	pthread_cleanup_push(cleanup, NULL);
 	printf("\n\n################# thread begin ######################\n");
-	printf("thread num: %d\n", ++tn);
 	int fd = *((int *)args);
 	int milestone = *((int *)args + 1);
 	if(milestone == 1)
