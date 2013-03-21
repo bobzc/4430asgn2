@@ -4,6 +4,8 @@ int tn = 0;
 
 HOST_INFO host_info[10];
 pthread_mutex_t mutex;
+pthread_mutex_t crypt_mutex;
+pthread_mutex_t cache_mutex;
 pthread_mutex_t fd_mutex[1000];
 
 int recv_req(int fd, char *buf);
@@ -526,15 +528,179 @@ void milestone_2(int fd){
 
 
 
+
+
+
 /*******************************************************************************************/
 /*******************************************************************************************/
 /******************************* MILESTONE THREE BEGIN *************************************/
+char *get_host_name(char *buf_begin, char *buf_end){
+	char *field_begin = buf_begin - 2;
+	char *field_end = buf_begin - 2;
+	int field_len;
+	do{
+		field_begin = field_end + 2;
+		field_end = strstr(field_begin, "\r\n");
+		field_len = (int)(field_end - field_begin);
+		if(strncmp_i(field_begin, HOST_FIELD, strlen(HOST_FIELD)) == 0){
+			return get_field_value(field_begin + strlen(HOST_FIELD), field_end);
+		}
+	}while(field_len != 0);
+	return NULL;
+}
+
+char *get_url(char *begin, char *end){
+	char *url_begin = strstr(begin, " ") + 1;
+	char *url_end = strstr(url_begin, " ");
+	char *ret;
+	if(memcmp(url_begin, "http://", 7) == 0){
+		ret = (char *)calloc((int)(url_end - url_begin) + 1, sizeof(char));
+		memcpy(ret, url_begin, (int)(url_end - url_begin));
+		ret[(int)(url_end - url_begin)] = '\0';
+		return ret;
+	}else{
+		char *host_name = get_host_name(begin, end);	
+		int length = (int)(url_end - url_begin) + strlen(host_name) + 1;
+		ret = (char *)calloc(length, sizeof(char));
+		memcpy(ret, host_name, strlen(host_name));
+		memcpy(ret + strlen(host_name), url_begin, (int)(url_end - url_begin));
+		ret[length - 1] = '\0';
+		free(host_name);
+		return ret;
+	}
+}
+
+int is_valid_ext(char *url){
+	int len = strlen(url);
+	if(strncmp(".html", url + len - 5, 5) == 0){
+		return 1;
+	}
+	if(strncmp(".jpg", url + len - 4, 4) == 0){
+		return 1;
+	}
+	if(strncmp(".gif", url + len - 4, 4) == 0){
+		return 1;
+	}
+	if(strncmp(".txt", url + len - 4, 4) == 0){
+		return 1;
+	}
+	return 0;
+}
 
 
+void get_filename(char *filename, char *url){
+	int i;
+
+	pthread_mutex_lock(&crypt_mutex);
+	strncpy(filename, crypt(url, "$1$00$")+6, 23);
+	pthread_mutex_unlock(&crypt_mutex);
+	for(i = 0; i < 22; i++){
+		if(filename[i] == '/')
+			filename[i] = '-';
+	}
+	free(url);
+}
 
 
+void milestone_3(int fd){
+	int count, total_count = 0;
+	int conn_flag = 1;
+	struct addrinfo *host_addr;
+	int server_fd;
 
+	char buf[HEADER_BUFFER_SIZE];
+	
+	while(conn_flag){
+		/* receive request */
+		memset(buf, 0, HEADER_BUFFER_SIZE);
+		printf("Waiting for requests...\n");
+		recv_req(fd, buf);
+		
+		char *req_begin = buf;
+		char *req_end = buf;
+		while(1){
+			char *tmp;
+			char *url;
+			char filename[23];
+			req_begin = req_end;
+			if((tmp = strstr(req_begin, "\r\n\r\n")) == NULL){
+				break;	
+			}
+			req_end = tmp + 4;
 
+			printf("Handling request...(%d Bytes)\n", (int)(req_end - req_begin));
+
+			/* get url*/
+			url = get_url(req_begin, req_end);
+			printf("URL: %s\n", url);
+			
+			is_valid_ext(url);	
+			/* get cache file name */
+			get_filename(filename, url);
+						
+			printf("%s\n",filename);
+			
+
+			/* check connection field */
+			conn_flag = is_conn_alive(req_begin, req_end);
+
+			/* get host address */
+			get_host(req_begin, req_end, &host_addr);
+	
+			if(host_addr == NULL){
+				perror("Cannot get host addr.");
+				pthread_exit(NULL);
+			}
+	
+			/* mapping host addr */
+			server_fd = find_fd((struct sockaddr *)host_addr->ai_addr);
+			pthread_mutex_lock(&fd_mutex[server_fd]);
+
+			/* foward request */
+			send(server_fd, req_begin, (int)(req_end - req_begin), 0);
+			printf("Forward request...(%d Bytes)\n", (int)(req_end - req_begin));
+
+			/* receive response */
+			char recv_buf[HEADER_BUFFER_SIZE];
+			total_count = recv_rpn(server_fd, recv_buf);
+
+			/* if host has closed the connection */
+			if(total_count == 0){
+				/* close the connection */
+				close_conn_host(server_fd);
+				pthread_mutex_unlock(&fd_mutex[server_fd]);
+			
+				/* re-find a fd */
+				server_fd = find_fd((struct sockaddr *)host_addr->ai_addr);
+				pthread_mutex_lock(&fd_mutex[server_fd]);
+			
+				/* forward request again */
+				send(server_fd, req_begin, (int)(req_end - req_begin), 0);
+				printf("Re-Forward request...(%d Bytes)\n", (int)(req_end - req_begin));
+
+				/* receive response */
+				total_count = recv_rpn(server_fd, recv_buf);
+			}	
+
+			/* get content length, header length and check connection field */
+			int cont_len = get_cont_len(recv_buf, recv_buf + total_count);
+			int header_len = get_header_len(recv_buf);
+			int host_conn_flag = is_conn_alive(recv_buf, recv_buf + total_count);
+			
+			/* send response to client */
+			int sent_cnt = send_rpn(fd, server_fd, recv_buf, total_count, cont_len, header_len);
+			printf("Forward response...");
+			printf("(Header: %d Bytes) (Content: %d Bytes) (Total: %d Bytes)\n", 
+				header_len, cont_len, sent_cnt + header_len);
+	
+			if(host_conn_flag == 0){	
+				close_conn_host(server_fd);
+			}	
+
+			pthread_mutex_unlock(&fd_mutex[server_fd]);
+		}
+	}
+}
 
 /******************************* MILESTONE THREE END ***************************************/
 /*******************************************************************************************/
@@ -554,6 +720,10 @@ void *run(void *args){
 		milestone_1(fd);
 	if(milestone == 2)
 		milestone_2(fd);
+	if(milestone == 3){
+		mkdir("./cache", 0777);
+		milestone_3(fd);
+	}
 	pthread_cleanup_pop(1);
 }
 
@@ -564,6 +734,8 @@ int main(int argc, char **argv){
 		exit(1);
 	}
 	pthread_mutex_init(&mutex, NULL);
+	pthread_mutex_init(&crypt_mutex, NULL);
+	pthread_mutex_init(&cache_mutex, NULL);
 	for(int i = 0; i < 1000; i++)
 		pthread_mutex_init(&fd_mutex[i], NULL);
 

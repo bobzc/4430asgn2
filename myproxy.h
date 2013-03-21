@@ -7,12 +7,13 @@
 #include<malloc.h>
 #include<sys/socket.h>
 #include<sys/types.h>
+#include<sys/stat.h>
 #include<netinet/in.h>
 #include<arpa/inet.h>
 #include<netdb.h>
 #include<signal.h>
 #include<ctype.h>
-
+#include<crypt.h>
 
 #define HEADER_BUFFER_SIZE 16384
 #define CONN_ALIVE_FIELD "Connection: keep-alive"
