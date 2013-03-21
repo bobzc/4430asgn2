@@ -264,6 +264,7 @@ int sock_addr_cmp_port(const struct sockaddr *sa, const struct sockaddr *sb){
 }
 
 
+/* get connection and proxy-connection field value */
 int is_conn_alive(char *buf_begin, char *buf_end){
 	char *field_begin = buf_begin - 2;
 	char *field_end = buf_begin - 2;
@@ -281,6 +282,7 @@ int is_conn_alive(char *buf_begin, char *buf_end){
 	return 1;
 }
 
+/* get content length */
 int get_cont_len(char *buf_begin, char *buf_end){
 	char *field_begin = buf_begin - 2;
 	char *field_end = buf_begin - 2;
@@ -297,6 +299,8 @@ int get_cont_len(char *buf_begin, char *buf_end){
 	return 0;
 }
 
+
+/* get heafer length */
 int get_header_len(char *buf){
 	char *tmp = strstr(buf, "\r\n\r\n");
 	if(tmp == NULL){
@@ -323,7 +327,7 @@ void get_host(char *buf_begin, char *buf_end, struct addrinfo **host_addr){
 	}while(field_len != 0);
 }
 
-
+/* find a host fd for forwarding request */
 int find_fd(struct sockaddr *sa){
 	pthread_mutex_lock(&mutex);
 
@@ -369,6 +373,8 @@ int find_fd(struct sockaddr *sa){
 	return fd;
 }
 
+
+/* close fd */
 void close_conn_host(int fd){
 	pthread_mutex_lock(&mutex);
 	for(int i = 0; i < 10; i++){
@@ -381,6 +387,8 @@ void close_conn_host(int fd){
 	pthread_mutex_unlock(&mutex);
 }
 
+
+/* receive request from client */
 int recv_req(int fd, char *buf){
 		int total_count = 0, count;
 		do{
@@ -401,7 +409,7 @@ int recv_req(int fd, char *buf){
 		printf("Receive requests...(%d Bytes)\n", total_count);
 }
 
-
+/* receive response from server */
 int recv_rpn(int server_fd, char *recv_buf){
 		memset(recv_buf, 0, HEADER_BUFFER_SIZE);
 		int total_count = 0;
@@ -419,6 +427,21 @@ int recv_rpn(int server_fd, char *recv_buf){
 		}	
 
 		return total_count;
+}
+
+/* send response to client */
+int send_rpn(int client_fd, int server_fd, char *recv_buf, int count_now, int cont_len, int header_len){
+	int	count = 0;	
+	while(count < count_now){
+		count += send(client_fd, recv_buf + count, count_now - count, 0);
+	}
+	int sent_cnt = count_now - header_len;
+	while(sent_cnt < cont_len){
+		int recv_cnt = recv(server_fd, recv_buf, sizeof(recv_buf), 0);
+		send(client_fd, recv_buf, recv_cnt, 0);
+		sent_cnt += recv_cnt;
+	}
+	return sent_cnt;
 }
 
 
@@ -471,13 +494,21 @@ void milestone_2(int fd){
 			char recv_buf[HEADER_BUFFER_SIZE];
 			total_count = recv_rpn(server_fd, recv_buf);
 
+			/* if host has closed the connection */
 			if(total_count == 0){
+				/* close the connection */
 				close_conn_host(server_fd);
 				pthread_mutex_unlock(&fd_mutex[server_fd]);
+			
+				/* re-find a fd */
 				server_fd = find_fd((struct sockaddr *)host_addr->ai_addr);
 				pthread_mutex_lock(&fd_mutex[server_fd]);
+			
+				/* forward request again */
 				send(server_fd, req_begin, (int)(req_end - req_begin), 0);
 				printf("Re-Forward request...(%d Bytes)\n", (int)(req_end - req_begin));
+
+				/* receive response */
 				total_count = recv_rpn(server_fd, recv_buf);
 			}	
 
@@ -486,17 +517,8 @@ void milestone_2(int fd){
 			int header_len = get_header_len(recv_buf);
 			int host_conn_flag = is_conn_alive(recv_buf, recv_buf + total_count);
 			
-			count = 0;	
-			int client_fd = fd;
-			while(count < total_count){
-				count += send(client_fd, recv_buf + count, total_count - count, 0);
-			}
-			int sent_cnt = total_count - header_len;
-			while(sent_cnt < cont_len){
-				int recv_cnt = recv(server_fd, recv_buf, sizeof(recv_buf), 0);
-				send(client_fd, recv_buf, recv_cnt, 0);
-				sent_cnt += recv_cnt;
-			}
+			/* send response to client */
+			int sent_cnt = send_rpn(fd, server_fd, recv_buf, total_count, cont_len, header_len);
 			printf("Forward response...");
 			printf("(Header: %d Bytes) (Content: %d Bytes) (Total: %d Bytes)\n", 
 				header_len, cont_len, sent_cnt + header_len);
@@ -504,6 +526,7 @@ void milestone_2(int fd){
 			if(host_conn_flag == 0){	
 				close_conn_host(server_fd);
 			}	
+
 			pthread_mutex_unlock(&fd_mutex[server_fd]);
 		}
 	}
