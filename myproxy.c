@@ -4,6 +4,8 @@ int tn = 0;
 
 HOST_INFO host_info[10];
 pthread_mutex_t mutex;
+pthread_mutex_t fd_mutex[1000];
+
 
 /*******************************************************************************************/
 /*******************************************************************************************/
@@ -100,15 +102,7 @@ void fwd_rpn(int client_fd, int server_fd){
 	}
 
 	buf_len = proc_rpn(buf, buf + total_count, &cont_len, &header_len);
-/*	printf("Modified Response header:\n");
-	write(1, buf, header_len);
-	printf("-----------------------------------------\n");
-	printf("Received: %d\n", total_count);
-	printf("Response header length: %d\n", header_len);
-	printf("Response content length: %d\n", cont_len);
-	printf("Response buffer length: %d\n", buf_len);
-	printf("-----------------------------------------\n");
-*/
+
 	/* send response to browser */
 	count = 0;	
 	while(count < buf_len){
@@ -396,10 +390,12 @@ int recv_req(int fd, char *buf){
 
 		if(total_count < 0){
 			perror("Receive request error.");
+			pthread_mutex_unlock(&fd_mutex[fd]);
 			pthread_exit(NULL);
 		}
 		if(total_count == 0){
 			perror("End of request.");
+			pthread_mutex_unlock(&fd_mutex[fd]);
 			pthread_exit(NULL);
 		}
 		printf("Receive requests...(%d Bytes)\n", total_count);
@@ -409,13 +405,13 @@ int recv_req(int fd, char *buf){
 int recv_rpn(int server_fd, char *recv_buf){
 		memset(recv_buf, 0, HEADER_BUFFER_SIZE);
 		int total_count = 0;
-//		do{
+
 		total_count += recv(server_fd, recv_buf + total_count, HEADER_BUFFER_SIZE - 256 - total_count, 0);
 			
-//		}while(total_count != 0 && strstr(recv_buf, "\r\n\r\n") == NULL);
 
 		if(total_count < 0){
 			perror("Read Error.");
+			pthread_mutex_unlock(&fd_mutex[server_fd]);
 			pthread_exit(NULL);
 		}
 		if(total_count == 0){
@@ -465,6 +461,7 @@ void milestone_2(int fd){
 	
 			/* mapping host addr */
 			server_fd = find_fd((struct sockaddr *)host_addr->ai_addr);
+			pthread_mutex_lock(&fd_mutex[server_fd]);
 
 			/* foward request */
 			send(server_fd, req_begin, (int)(req_end - req_begin), 0);
@@ -476,7 +473,9 @@ void milestone_2(int fd){
 
 			if(total_count == 0){
 				close_conn_host(server_fd);
+				pthread_mutex_unlock(&fd_mutex[server_fd]);
 				server_fd = find_fd((struct sockaddr *)host_addr->ai_addr);
+				pthread_mutex_lock(&fd_mutex[server_fd]);
 				send(server_fd, req_begin, (int)(req_end - req_begin), 0);
 				printf("Re-Forward request...(%d Bytes)\n", (int)(req_end - req_begin));
 				total_count = recv_rpn(server_fd, recv_buf);
@@ -505,13 +504,10 @@ void milestone_2(int fd){
 			if(host_conn_flag == 0){	
 				close_conn_host(server_fd);
 			}	
+			pthread_mutex_unlock(&fd_mutex[server_fd]);
 		}
 	}
 }
-
-
-
-
 
 
 /******************************* MILESTONE TWO END *****************************************/
@@ -539,12 +535,14 @@ void *run(void *args){
 }
 
 int main(int argc, char **argv){
-	pthread_mutex_init(&mutex, NULL);
 	signal(SIGPIPE, SIG_IGN);
 	if(argc != 3){
 		printf("Usage: %s [port] [milestone]\n", argv[0]);
 		exit(1);
 	}
+	pthread_mutex_init(&mutex, NULL);
+	for(int i = 0; i < 1000; i++)
+		pthread_mutex_init(&fd_mutex[i], NULL);
 
 	int fd;
 	int port = atoi(argv[1]), milestone = atoi(argv[2]);
