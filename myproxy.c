@@ -596,9 +596,67 @@ void get_filename(char *filename, char *url){
 	pthread_mutex_unlock(&crypt_mutex);
 	for(i = 0; i < 22; i++){
 		if(filename[i] == '/')
-			filename[i] = '-';
+			filename[i] = '_';
 	}
 	free(url);
+}
+
+void get_path(char *path, char *filename){
+	memcpy(path, "./cache/", 8);
+	memcpy(path + 8, filename, 23);
+}
+
+int get_status_code(char *buf){
+	char *begin = strstr(buf, " ") + 1;
+	char code[4];
+	memcpy(code, begin, 3);
+	code[3] = '\0';
+	return atoi(code);
+}
+
+
+int send_rpn_pro(int client_fd, int server_fd, char *recv_buf, int count_now, int cont_len, int header_len, char *path){
+	int	count = 0;
+	FILE *fp;
+	FILE *fp_header;
+	int save;
+	if(path == NULL){
+		save = 0;
+	}else{
+		char h_path[35];
+		memcpy(h_path, path, 30);
+		memcpy(h_path + 30, ".tmp", 5);
+		fp = fopen(path, "w");
+		fp_header = fopen(h_path, "w");
+		if(fp == NULL){
+			save = 0;
+		}else{
+			save = 1;
+		}
+	}
+
+	while(count < count_now){
+		count += send(client_fd, recv_buf + count, count_now - count, 0);
+	}
+	if(save){
+		fwrite(recv_buf, 1, header_len, fp_header);
+		fwrite(recv_buf + header_len, 1,count_now - header_len,fp);
+	}	
+
+	int sent_cnt = count_now - header_len;
+	while(sent_cnt < cont_len){
+		int recv_cnt = recv(server_fd, recv_buf, sizeof(recv_buf), 0);
+		send(client_fd, recv_buf, recv_cnt, 0);
+		if(save){
+			fwrite(recv_buf,1, recv_cnt,fp);
+		}
+		sent_cnt += recv_cnt;
+	}
+	if(save){
+		fclose(fp_header);
+		fclose(fp);
+	}
+	return sent_cnt;
 }
 
 
@@ -622,6 +680,11 @@ void milestone_3(int fd){
 			char *tmp;
 			char *url;
 			char filename[23];
+			char path[31];
+			int valid_ext;
+			int cache_ctrl;
+			int if_mod_since;
+
 			req_begin = req_end;
 			if((tmp = strstr(req_begin, "\r\n\r\n")) == NULL){
 				break;	
@@ -633,13 +696,17 @@ void milestone_3(int fd){
 			/* get url*/
 			url = get_url(req_begin, req_end);
 			printf("URL: %s\n", url);
-			
-			is_valid_ext(url);	
-			/* get cache file name */
-			get_filename(filename, url);
-						
-			printf("%s\n",filename);
-			
+
+			valid_ext = is_valid_ext(url);
+
+			if(valid_ext){
+				/* get cache file name */
+				get_filename(filename, url);			
+				get_path(path, filename);	
+				if(access(path, F_OK) != -1){
+					printf("file exists\n");
+				}
+			}		
 
 			/* check connection field */
 			conn_flag = is_conn_alive(req_begin, req_end);
@@ -686,9 +753,16 @@ void milestone_3(int fd){
 			int cont_len = get_cont_len(recv_buf, recv_buf + total_count);
 			int header_len = get_header_len(recv_buf);
 			int host_conn_flag = is_conn_alive(recv_buf, recv_buf + total_count);
-			
+			int status_code = get_status_code(recv_buf);			
+			printf("%d\n", status_code);
+
 			/* send response to client */
-			int sent_cnt = send_rpn(fd, server_fd, recv_buf, total_count, cont_len, header_len);
+			int sent_cnt;
+			if(status_code == 200 && valid_ext){
+				sent_cnt = send_rpn_pro(fd, server_fd, recv_buf, total_count, cont_len, header_len, path);
+			}else{
+				sent_cnt = send_rpn_pro(fd, server_fd, recv_buf, total_count, cont_len, header_len, NULL);
+			}
 			printf("Forward response...");
 			printf("(Header: %d Bytes) (Content: %d Bytes) (Total: %d Bytes)\n", 
 				header_len, cont_len, sent_cnt + header_len);

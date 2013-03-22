@@ -3,6 +3,7 @@
 #include<string.h>
 #include<unistd.h>
 #include<pthread.h>
+#include<fcntl.h>
 #include<errno.h>
 #include<malloc.h>
 #include<sys/socket.h>
