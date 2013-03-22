@@ -716,12 +716,10 @@ void send_cache(int fd, char *path){
 	int count;
 	while((count = fread(buf, 1, 1023, fp_header)) > 0){
 		send(fd, buf, count, 0);
-		write(1, buf, count);
 	}
 		printf("%d\n",count);
 	while((count = fread(buf, 1, 1023, fp)) > 0){
 		send(fd, buf, count, 0);
-		write(1, buf, count);
 	}
 		printf("%d\n",count);
 	fclose(fp);
