@@ -1,3 +1,6 @@
+#define _XOPEN_SOURCE 700
+#define _BSD_SOURCE
+
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
@@ -15,6 +18,7 @@
 #include<signal.h>
 #include<ctype.h>
 #include<crypt.h>
+#include<time.h>
 
 #define HEADER_BUFFER_SIZE 16384
 #define CONN_ALIVE_FIELD "Connection: keep-alive"
@@ -24,7 +28,7 @@
 #define PROXY_CONN_CLOSE_FIELD_B "Proxy-Connection: close\r\n"
 #define CONTENT_LEN_FIELD "Content-Length: "
 #define HOST_FIELD "Host: "
-
+#define IF_MOD_SINCE_FIELD  "If-modified-since: "
 
 #define SOCK_ADDR_IN_PTR(sa) ((struct sockaddr_in *)(sa))
 #define SOCK_ADDR_IN_PORT(sa) SOCK_ADDR_IN_PTR(sa) -> sin_port

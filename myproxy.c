@@ -615,6 +615,50 @@ int get_status_code(char *buf){
 }
 
 
+int get_cache_ctrl(char *begin, char *end){
+	char *field_begin = begin - 2;
+	char *field_end = begin - 2;
+	int field_len;
+	do{
+		field_begin = field_end + 2;
+		field_end = strstr(field_begin, "\r\n");
+		field_len = (int)(field_end - field_begin);
+		if(strncmp_i(field_begin, "cache-control: ", 15) == 0){
+			char *val = get_field_value(field_begin + strlen(HOST_FIELD), field_end);
+			if(strstr(val, "no-cache") != NULL){
+				return 1;
+			}
+		}
+	}while(field_len != 0);
+	return 0;
+}
+
+int get_if_mod_since(char *begin, char *end){
+	char *field_begin = begin - 2;
+	char *field_end = begin - 2;
+	int field_len;
+	do{
+		field_begin = field_end + 2;
+		field_end = strstr(field_begin, "\r\n");
+		field_len = (int)(field_end - field_begin);
+		if(strncmp_i(field_begin, IF_MOD_SINCE_FIELD, strlen(IF_MOD_SINCE_FIELD)) == 0){
+			char *val = get_field_value(field_begin + strlen(IF_MOD_SINCE_FIELD), field_end);
+			struct tm tm;
+			strptime(val, "%a, %d %b %Y %H:%M:%S GMT", &tm);
+			return timegm(&tm);
+		}
+	}while(field_len != 0);
+	return -1;
+}
+
+
+long get_file_time(char *path){
+	struct stat sb;
+	stat(path, &sb);
+	return sb.st_mtime;
+}
+
+
 int send_rpn_pro(int client_fd, int server_fd, char *recv_buf, int count_now, int cont_len, int header_len, char *path){
 	int	count = 0;
 	FILE *fp;
@@ -631,6 +675,7 @@ int send_rpn_pro(int client_fd, int server_fd, char *recv_buf, int count_now, in
 		if(fp == NULL){
 			save = 0;
 		}else{
+			pthread_mutex_lock(&cache_mutex);
 			save = 1;
 		}
 	}
@@ -653,10 +698,70 @@ int send_rpn_pro(int client_fd, int server_fd, char *recv_buf, int count_now, in
 		sent_cnt += recv_cnt;
 	}
 	if(save){
+		pthread_mutex_unlock(&cache_mutex);
 		fclose(fp_header);
 		fclose(fp);
 	}
 	return sent_cnt;
+}
+
+void send_cache(int fd, char *path){
+	pthread_mutex_lock(&cache_mutex);
+	char h_path[35];
+	memcpy(h_path, path, 30);
+	memcpy(h_path + 30, ".tmp", 5);
+	FILE *fp = fopen(path, "r");
+	FILE *fp_header = fopen(h_path, "r");
+	char buf[1024];
+	int count;
+	while((count = fread(buf, 1, 1023, fp_header)) > 0){
+		send(fd, buf, count, 0);
+		write(1, buf, count);
+	}
+		printf("%d\n",count);
+	while((count = fread(buf, 1, 1023, fp)) > 0){
+		send(fd, buf, count, 0);
+		write(1, buf, count);
+	}
+		printf("%d\n",count);
+	fclose(fp);
+	fclose(fp_header);
+	pthread_mutex_unlock(&cache_mutex);
+}
+
+void change_ims(char *begin, char *end, long ims){
+	char *field_begin = begin - 2;
+	char *field_end = begin - 2;
+	int field_len;
+	char time[50] = {0};
+    struct tm tm;
+    gmtime_r(&ims, &tm);
+	size_t len = strftime(time, sizeof(time),
+                          "%a, %d %b %Y %H:%M:%S GMT", &tm);
+	do{
+		field_begin = field_end + 2;
+		field_end = strstr(field_begin, "\r\n");
+		field_len = (int)(field_end - field_begin);
+		if(strncmp_i(field_begin, IF_MOD_SINCE_FIELD, strlen(IF_MOD_SINCE_FIELD)) == 0){
+			memcpy(field_begin + strlen(IF_MOD_SINCE_FIELD), time, len);
+		}
+	}while(field_len != 0);
+}
+
+void send_ims(int fd, long ims){
+	char time[50] = {0};
+    struct tm tm;
+    gmtime_r(&ims, &tm);
+	size_t len = strftime(time, sizeof(time),
+                          "%a, %d %b %Y %H:%M:%S GMT", &tm);
+	send(fd, "IF_MOD_SINCE_FIELD", strlen(IF_MOD_SINCE_FIELD), 0);
+	send(fd, time, len, 0);
+	send(fd, "\r\n", 2, 0);
+}
+
+void send_304(int fd){
+	char *msg = "HTTP/1.1 304 Not Modified\r\n\r\n";
+	send(fd, msg, strlen(msg), 0);
 }
 
 
@@ -681,9 +786,9 @@ void milestone_3(int fd){
 			char *url;
 			char filename[23];
 			char path[31];
-			int valid_ext;
-			int cache_ctrl;
-			int if_mod_since;
+			long file_time;
+			int insert_ims = 0;
+			int ims_mod = 0;				
 
 			req_begin = req_end;
 			if((tmp = strstr(req_begin, "\r\n\r\n")) == NULL){
@@ -693,18 +798,33 @@ void milestone_3(int fd){
 
 			printf("Handling request...(%d Bytes)\n", (int)(req_end - req_begin));
 
-			/* get url*/
+			/* get url, cache control, if modified since */
 			url = get_url(req_begin, req_end);
-			printf("URL: %s\n", url);
-
-			valid_ext = is_valid_ext(url);
+			int cache_ctrl = get_cache_ctrl(req_begin, req_end);
+			int if_mod_since = get_if_mod_since(req_begin, req_end);
+			int valid_ext = is_valid_ext(url);
 
 			if(valid_ext){
 				/* get cache file name */
 				get_filename(filename, url);			
 				get_path(path, filename);	
 				if(access(path, F_OK) != -1){
-					printf("file exists\n");
+					file_time = get_file_time(path);
+					printf("%ld\n\n",file_time);
+					if(!cache_ctrl && file_time >= if_mod_since){
+						printf("Returning cache to client...");
+						send_cache(fd, path);
+						continue;	
+					}else if(!cache_ctrl && file_time < if_mod_since){
+						printf("Returning 304 to client...");
+						send_304(fd);
+						continue;
+					}else if(cache_ctrl && if_mod_since == -1){
+						insert_ims = 1;						
+					}else if(cache_ctrl && if_mod_since < file_time){
+						change_ims(req_begin, req_end, file_time);
+						ims_mod = 1;
+					}
 				}
 			}		
 
@@ -724,7 +844,11 @@ void milestone_3(int fd){
 			pthread_mutex_lock(&fd_mutex[server_fd]);
 
 			/* foward request */
-			send(server_fd, req_begin, (int)(req_end - req_begin), 0);
+			send(server_fd, req_begin, (int)(req_end - req_begin - 2), 0);
+			if(insert_ims){
+				send_ims(server_fd, file_time);
+			}
+			send(server_fd, "\r\n", 2, 0);
 			printf("Forward request...(%d Bytes)\n", (int)(req_end - req_begin));
 
 			/* receive response */
@@ -754,12 +878,15 @@ void milestone_3(int fd){
 			int header_len = get_header_len(recv_buf);
 			int host_conn_flag = is_conn_alive(recv_buf, recv_buf + total_count);
 			int status_code = get_status_code(recv_buf);			
-			printf("%d\n", status_code);
+			printf("Response status code: %d\n", status_code);
 
 			/* send response to client */
 			int sent_cnt;
 			if(status_code == 200 && valid_ext){
 				sent_cnt = send_rpn_pro(fd, server_fd, recv_buf, total_count, cont_len, header_len, path);
+			}else if(status_code == 304 && ims_mod){
+				printf("Returning cache to client...");
+				send_cache(fd, path);
 			}else{
 				sent_cnt = send_rpn_pro(fd, server_fd, recv_buf, total_count, cont_len, header_len, NULL);
 			}
